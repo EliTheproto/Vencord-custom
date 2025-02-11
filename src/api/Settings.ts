@@ -23,7 +23,7 @@ import { Logger } from "@utils/Logger";
 import { mergeDefaults } from "@utils/mergeDefaults";
 import { putCloudSettings } from "@utils/settingsSync";
 import { DefinedSettings, OptionType, SettingsChecks, SettingsDefinition } from "@utils/types";
-import { React } from "@webpack/common";
+import { React, useEffect } from "@webpack/common";
 
 import plugins from "~plugins";
 
@@ -129,7 +129,7 @@ export const SettingsStore = new SettingsStoreClass(settings, {
 
         if (path === "plugins" && key in plugins)
             return target[key] = {
-                enabled: IS_REPORTER ?? plugins[key].required ?? plugins[key].enabledByDefault ?? false
+                enabled: IS_REPORTER || plugins[key].required || plugins[key].enabledByDefault || false
             };
 
         // Since the property is not set, check if this is a plugin's setting and if so, try to resolve
@@ -192,7 +192,7 @@ export const Settings = SettingsStore.store;
 export function useSettings(paths?: UseSettings<Settings>[]) {
     const [, forceUpdate] = React.useReducer(() => ({}), {});
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (paths) {
             paths.forEach(p => SettingsStore.addChangeListener(p, forceUpdate));
             return () => paths.forEach(p => SettingsStore.removeChangeListener(p, forceUpdate));
@@ -200,7 +200,7 @@ export function useSettings(paths?: UseSettings<Settings>[]) {
             SettingsStore.addGlobalChangeListener(forceUpdate);
             return () => SettingsStore.removeGlobalChangeListener(forceUpdate);
         }
-    }, []);
+    }, [paths]);
 
     return SettingsStore.store;
 }
@@ -220,6 +220,17 @@ export function migratePluginSettings(name: string, ...oldNames: string[]) {
     }
 }
 
+export function migratePluginSetting(pluginName: string, oldSetting: string, newSetting: string) {
+    const settings = SettingsStore.plain.plugins[pluginName];
+    if (!settings) return;
+
+    if (!Object.hasOwn(settings, oldSetting) || Object.hasOwn(settings, newSetting)) return;
+
+    settings[newSetting] = settings[oldSetting];
+    delete settings[oldSetting];
+    SettingsStore.markAsChanged();
+}
+
 export function definePluginSettings<
     Def extends SettingsDefinition,
     Checks extends SettingsChecks<Def>,
@@ -229,6 +240,10 @@ export function definePluginSettings<
         get store() {
             if (!definedSettings.pluginName) throw new Error("Cannot access settings before plugin is initialized");
             return Settings.plugins[definedSettings.pluginName] as any;
+        },
+        get plain() {
+            if (!definedSettings.pluginName) throw new Error("Cannot access settings before plugin is initialized");
+            return PlainSettings.plugins[definedSettings.pluginName] as any;
         },
         use: settings => useSettings(
             settings?.map(name => `plugins.${definedSettings.pluginName}.${name}`) as UseSettings<Settings>[]
